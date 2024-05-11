@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+import os
+import argparse
+from helpers.compare_average_convergence import compare_average_convergence
+
+
+def handle_args():
+    parser = argparse.ArgumentParser(
+        description="Compares the convergence of multiple results on a single dataset"
+    )
+    parser.add_argument(
+        "--dataset_dir",
+        "-d",
+        type=str,
+        help="Path to the dataset directory",
+        required=True
+    )
+    parser.add_argument(
+        "--result_dir",
+        "-r",
+        type=str,
+        help="Path to the result directory.",
+        required=True
+    )
+    parser.add_argument(
+        "--independent_variables",
+        "-iv",
+        type=str,
+        nargs='+',
+        help="The independent variables.",
+        required=True
+    )
+    parser.add_argument(
+        "--method",
+        "-m",
+        type=str,
+        help="The method to compare convergence on.",
+        required=True
+    )
+    parser.add_argument(
+        "--baseline",
+        "-b",
+        type=str,
+        help="Name of the baseline we are comparing against.",
+        required=True
+    )
+    
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = handle_args()
+    compare_average_convergence(**vars(args))

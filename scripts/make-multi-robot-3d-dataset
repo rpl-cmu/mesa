@@ -1,0 +1,642 @@
+#!/usr/bin/env python
+import argparse
+import os
+import sys
+from datetime import date
+
+import random
+import gtsam
+import jrl
+import numpy as np
+from gtsam.symbol_shorthand import X
+from scipy.stats import chi2
+from copy import copy
+from string import ascii_letters
+
+
+Rxp = gtsam.Rot3(np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]))
+Rxn = gtsam.Rot3(np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]]))
+
+Ryp = gtsam.Rot3(np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]))
+Ryn = gtsam.Rot3(np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]))
+
+Rzp = gtsam.Rot3(np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]]))
+Rzn = gtsam.Rot3(np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]]))
+
+
+# GLOBALS
+ODOM_OPTIONS_GRIDWORLD = [
+    gtsam.Pose3(gtsam.Rot3.Identity(), np.array([1, 0, 0])),  # Move forward
+    gtsam.Pose3(Rzp, np.array([0, 0, 0])),  # Turn z
+    gtsam.Pose3(Rzn, np.array([0, 0, 0])),  # Turn -z
+    gtsam.Pose3(Ryp, np.array([0, 0, 0])),  # Turn y
+    gtsam.Pose3(Ryn, np.array([0, 0, 0])),  # Turn -y
+    gtsam.Pose3(Rxp, np.array([0, 0, 0])),  # Turn x
+    gtsam.Pose3(Rxn, np.array([0, 0, 0])),  # Turn -x
+]
+
+
+def handle_args():
+    parser = argparse.ArgumentParser(
+        description="Generates a random multi-robot grid-world pose graph dataset in jrl format."
+    )
+    parser.add_argument(
+        "-o", "--output_dir", type=str, required=True, help="The output directory."
+    )
+    parser.add_argument(
+        "-n", "--name", type=str, required=True, help="The base name for the dataset."
+    )
+    parser.add_argument(
+        "-r",
+        "--repeats",
+        type=int,
+        default=1,
+        help="The number of datasets to generate.",
+    )
+    parser.add_argument(
+        "-nr",
+        "--number_robots",
+        type=int,
+        default=2,
+        help="The number of robots",
+    )
+    parser.add_argument(
+        "-np",
+        "--number_poses",
+        type=int,
+        default=500,
+        help="Number of poses for each robot",
+    )
+    parser.add_argument(
+        "--odom_probs",
+        type=float,
+        nargs="+",
+        default=[0.7, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
+        help="Odom action probabilities [forward, +-z, +-y, +-x]",
+    )
+
+    parser.add_argument(
+        "--loop_closure_index_threshold",
+        type=int,
+        default=5,
+        help="Number steps before a prior pose can be identified as a loop closure",
+    )
+    parser.add_argument(
+        "--loop_closure_distance_threshold",
+        type=int,
+        default=3,
+        help="Max distance between current pose and previous pose for a loop closure to be detected",
+    )
+    parser.add_argument(
+        "--loop_closure_probability",
+        type=float,
+        default=0.8,
+        help="Probability that, given a loop closure exists by the threshold criteria, it is detected by the robot",
+    )
+
+    parser.add_argument(
+        "--comm_range",
+        type=float,
+        default=20,
+        help="Distance threshold for communication between robots",
+    )
+    parser.add_argument(
+        "--comm_freq",
+        type=float,
+        default=5,
+        help="Number of poses between communication",
+    )
+
+    parser.add_argument(
+        "--prior_noise_sigmas",
+        type=float,
+        nargs="+",
+        default=[1, 1, 1, 10, 10, 10],
+        help="Sigmas for diagonal noise model of odometry measurements",
+    )
+
+    parser.add_argument(
+        "--robot_zero_prior_noise_sigmas",
+        type=float,
+        nargs="+",
+        default=[0.001, 0.001, 0.001, 0.01, 0.01, 0.01],
+        help="Sigmas for diagonal noise model of odometry measurements",
+    )
+
+    parser.add_argument(
+        "--odom_noise_sigmas",
+        type=float,
+        nargs="+",
+        default=[0.001, 0.001, 0.001, 0.005, 0.005, 0.005],
+        help="Sigmas for diagonal noise model of odometry measurements",
+    )
+
+    parser.add_argument(
+        "--loop_noise_sigmas",
+        type=float,
+        nargs="+",
+        default=[0.001, 0.001, 0.001, 0.005, 0.005, 0.005],
+        help="Sigmas for diagonal noise model of intra-robot loop closure measurements",
+    )
+
+    parser.add_argument(
+        "--comm_loop_measurement_type",
+        type=str,
+        default="pose",
+        help="The measurement type for inter-robot measurements [pose, range]",
+    )
+
+    parser.add_argument(
+        "--comm_loop_noise_sigmas",
+        type=float,
+        nargs="+",
+        default=[0.001, 0.001, 0.001, 0.005, 0.005, 0.005],
+        help="Sigmas for diagonal noise model of inter-robot loop closure measurements",
+    )
+
+    parser.add_argument(
+        "--initialization_type",
+        type=str,
+        default="odom",
+        help="What initialization type to use ('odom', 'gt', 'noisy_gt').",
+    )
+
+    parser.add_argument(
+        "--initialization_noise_sigmas",
+        type=float,
+        nargs="+",
+        default=[0.2, 0.2, 0.2, 1, 1, 1],
+        help="Sigmas to use for 'noisy-gt' initialization.",
+    )
+
+    parser.add_argument(
+        "--xlims",
+        type=float,
+        nargs="+",
+        default=[-30, 30],
+        help="X Dimension Limits",
+    )
+    parser.add_argument(
+        "--ylims",
+        type=float,
+        nargs="+",
+        default=[-30, 30],
+        help="Y Dimension Limits",
+    )
+    parser.add_argument(
+        "--zlims",
+        type=float,
+        nargs="+",
+        default=[-30, 30],
+        help="X Dimension Limits",
+    )
+
+    return parser.parse_args()
+
+
+def get_close_pose_idx(vals, rid, pose_index, index_tresh, dist_thresh):
+    current_pose = vals.atPose3(gtsam.symbol(rid, pose_index))
+    close_pose_indexes = []
+    for i in range(pose_index - 1):
+        pose = vals.atPose3(gtsam.symbol(rid, i))
+        if (
+            np.linalg.norm(current_pose.inverse().compose(pose).translation())
+            < dist_thresh
+            and abs(i - pose_index) > index_tresh
+        ):
+            close_pose_indexes.append(i)
+    if len(close_pose_indexes) > 1:
+        return np.random.choice(close_pose_indexes)
+    else:
+        return None
+
+
+def get_comm_robot(vals, robots, rid, pose_index, dist_thresh):
+    current_pose = vals.atPose3(gtsam.symbol(rid, pose_index))
+    shuffled_robots = copy(robots)
+    random.shuffle(shuffled_robots)
+    for other_rid in shuffled_robots:
+        if rid != other_rid:
+            pose = vals.atPose3(gtsam.symbol(other_rid, pose_index))
+            if (
+                np.linalg.norm(current_pose.inverse().compose(pose).translation())
+                < dist_thresh
+            ):
+                return other_rid
+    return None
+
+
+def get_available_comms(vals, robots, pose_index, dist_thresh):
+    avaliable = copy(robots)
+    comms = []
+
+    for rid in robots:
+        if rid in avaliable:
+            other_rid = get_comm_robot(vals, avaliable, rid, pose_index, dist_thresh)
+            if other_rid:
+                comms.append((rid, other_rid))
+                avaliable.remove(rid)
+                avaliable.remove(other_rid)
+    return comms
+
+
+def add_priors(
+    builder,
+    robots,
+    stamp,
+    pose_number,
+    prev_gt_poses,
+    prev_est_poses,
+    args,
+):
+    for i, rid in enumerate(robots):
+        key = gtsam.symbol(rid, pose_number)
+        fg = gtsam.NonlinearFactorGraph()
+        # Determine the initial Pose
+        initial_rot = np.random.choice(ODOM_OPTIONS_GRIDWORLD).rotation()
+        initial_position = np.array(
+            [
+                np.random.uniform(args.xlims[0] / 2, args.xlims[1] / 2),
+                np.random.uniform(args.ylims[0] / 2, args.ylims[1] / 2),
+                np.random.uniform(args.zlims[0] / 2, args.zlims[1] / 2),
+            ]
+        )
+        if i == 0:
+            initial_position = np.zeros(3)
+            initial_rot = gtsam.Rot3()
+        init_pose = gtsam.Pose3(initial_rot, initial_position)
+
+        noise_sigmas = args.prior_noise_sigmas
+        if i == 0:
+            noise_sigmas = args.robot_zero_prior_noise_sigmas
+
+        # Add as factor
+        fg.addPriorPose3(
+            key,
+            init_pose,
+            gtsam.noiseModel.Isotropic.Sigmas(noise_sigmas),
+        )
+        vals = gtsam.Values()
+        vals.insert(key, init_pose)
+
+        builder.addEntry(
+            rid,
+            stamp,
+            fg,
+            [jrl.PriorFactorPose3Tag],
+            {},
+            jrl.TypedValues(vals, {key: jrl.Pose3Tag}),
+            jrl.TypedValues(vals, {key: jrl.Pose3Tag}),
+        )
+        # Update the prev_vals
+        prev_gt_poses.insert(key, init_pose)
+        prev_est_poses.insert(key, init_pose)
+    return builder, prev_gt_poses, prev_est_poses
+
+
+def add_odom_step(
+    builder,
+    robots,
+    stamp,
+    pose_number,
+    odom_noise_model,
+    odom_noise_gen,
+    odom_gen,
+    prev_gt_poses,
+    prev_est_poses,
+    init_noise_gen,
+    args,
+):
+    for rid in robots:
+        key = gtsam.symbol(rid, pose_number)
+        prev_key = gtsam.symbol(rid, pose_number - 1)
+
+        odom = odom_gen(prev_gt_poses.atPose3(prev_key))
+        noise = odom_noise_gen()
+        measure = odom.compose(noise)
+
+        gt_pose = prev_gt_poses.atPose3(prev_key).compose(odom)
+        est_pose = prev_est_poses.atPose3(prev_key).compose(measure)
+
+        fg = gtsam.NonlinearFactorGraph()
+        fg.add(gtsam.BetweenFactorPose3(prev_key, key, measure, odom_noise_model))
+        gt_vals = gtsam.Values()
+        gt_vals.insert(key, gt_pose)
+        est_vals = gtsam.Values()
+        est_vals.insert(key, est_pose)
+
+        builder.addEntry(
+            rid,
+            stamp,
+            fg,
+            [jrl.BetweenFactorPose3Tag],
+            {},
+            jrl.TypedValues(est_vals, {key: jrl.Pose3Tag}),
+            jrl.TypedValues(gt_vals, {key: jrl.Pose3Tag}),
+        )
+
+        # Update the prev_vals
+        prev_gt_poses.insert(key, gt_pose)
+        if args.initialization_type == "gt":
+            prev_est_poses.insert(key, gt_pose)
+        elif args.initialization_type == "noisy_gt":
+            prev_est_poses.insert(key, gt_pose.compose(init_noise_gen()))
+        elif args.initialization_type == "odom":
+            prev_est_poses.insert(key, est_pose)
+        else:
+            raise Exception("Invalid Initialization_type")
+    return builder, prev_gt_poses, prev_est_poses
+
+
+def make_intra_loop_entry(vals, k1, k2, odom_noise_model, gen_noise):
+    noise = gen_noise()
+    measure = vals.atPose3(k1).inverse().compose(vals.atPose3(k2)).compose(noise)
+
+    fg = gtsam.NonlinearFactorGraph()
+    fg.add(gtsam.BetweenFactorPose3(k1, k2, measure, odom_noise_model))
+    return fg
+
+
+def make_loop_entry(vals, k1, k2, noise_model, gen_noise, measure_type):
+    fg = gtsam.NonlinearFactorGraph()
+    noise = gen_noise()
+    if measure_type == "pose":
+        measure = vals.atPose3(k1).inverse().compose(vals.atPose3(k2)).compose(noise)
+        fg.add(gtsam.BetweenFactorPose3(k1, k2, measure, noise_model))
+    elif measure_type == "range":
+        measure = (
+            np.linalg.norm(
+                vals.atPose3(k1).translation() - vals.atPose3(k2).translation()
+            )
+            + np.random.rand() * 2
+        )  # TEMP AND WRONG TODO FIX
+        fg.add(gtsam.RangeFactorPose3(k1, k2, measure, noise_model))
+    return fg
+
+
+def add_self_loops(
+    builder,
+    robots,
+    stamp,
+    pose_number,
+    loop_noise_model,
+    loop_noise_gen,
+    gt_poses,
+    args,
+):
+    for rid in robots:
+        close_pose_idx = get_close_pose_idx(
+            gt_poses,
+            rid,
+            pose_number,
+            args.loop_closure_index_threshold,
+            args.loop_closure_distance_threshold,
+        )
+        if close_pose_idx and np.random.rand() < args.loop_closure_probability:
+            key = gtsam.symbol(rid, pose_number)
+            prev_key = gtsam.symbol(rid, close_pose_idx)
+
+            builder.addEntry(
+                rid,
+                stamp,
+                make_loop_entry(
+                    gt_poses, key, prev_key, loop_noise_model, loop_noise_gen, "pose"
+                ),
+                [jrl.BetweenFactorPose3Tag],
+                {},
+            )
+    return builder
+
+
+def add_comm_loops(
+    builder,
+    robots,
+    stamp,
+    pose_number,
+    comm_loop_noise_model,
+    comm_loop_noise_gen,
+    gt_poses,
+    est_poses,
+    args,
+):
+
+    comms = get_available_comms(gt_poses, robots, pose_number, args.comm_range)
+
+    if args.comm_loop_measurement_type == "pose":
+        measure_type_tag = jrl.BetweenFactorPose3Tag
+    else:
+        measure_type_tag = jrl.RangeFactorPose3Tag
+
+    for ra, rb in comms:
+        ka = gtsam.symbol(ra, pose_number)
+        kb = gtsam.symbol(rb, pose_number)
+
+        gt_vals_ra = gtsam.Values()
+        gt_vals_ra.insert(ka, gt_poses.atPose3(ka))
+        est_vals_ra = gtsam.Values()
+        est_vals_ra.insert(ka, est_poses.atPose3(ka))
+
+        gt_vals_rb = gtsam.Values()
+        gt_vals_rb.insert(kb, gt_poses.atPose3(kb))
+        est_vals_rb = gtsam.Values()
+        est_vals_rb.insert(kb, est_poses.atPose3(kb))
+
+        builder.addEntry(
+            ra,
+            stamp,
+            make_loop_entry(
+                gt_poses,
+                ka,
+                kb,
+                comm_loop_noise_model,
+                comm_loop_noise_gen,
+                args.comm_loop_measurement_type,
+            ),
+            [measure_type_tag],
+            {},
+            jrl.TypedValues(est_vals_rb, {kb: jrl.Pose3Tag}),
+            jrl.TypedValues(gt_vals_rb, {kb: jrl.Pose3Tag}),
+        )
+        builder.addEntry(
+            rb,
+            stamp,
+            make_loop_entry(
+                gt_poses,
+                kb,
+                ka,
+                comm_loop_noise_model,
+                comm_loop_noise_gen,
+                args.comm_loop_measurement_type,
+            ),
+            [measure_type_tag],
+            {},
+            jrl.TypedValues(est_vals_ra, {ka: jrl.Pose3Tag}),
+            jrl.TypedValues(gt_vals_ra, {ka: jrl.Pose3Tag}),
+        )
+    return builder
+
+
+def make_dataset(args, dataset_count):
+
+    # Setup ID's for each robot
+    robots = []
+    for i in range(args.number_robots):
+        robots.append(ascii_letters[i])
+
+    # Setup the Dataset Builder
+    builder = jrl.DatasetBuilder(args.name + "_{:04d}".format(dataset_count), robots)
+
+    # Setup the noise Models
+    odom_noise_model = gtsam.noiseModel.Diagonal.Sigmas(args.odom_noise_sigmas)
+
+    def odom_noise_gen():
+        return gtsam.Pose3.Expmap(
+            np.random.multivariate_normal(
+                np.zeros((6,)), np.diag(np.array(args.odom_noise_sigmas) ** 2)
+            )
+        )
+
+    loop_noise_model = gtsam.noiseModel.Diagonal.Sigmas(args.loop_noise_sigmas)
+
+    def loop_noise_gen():
+        return gtsam.Pose3.Expmap(
+            np.random.multivariate_normal(
+                np.zeros((6,)), np.diag(np.array(args.loop_noise_sigmas) ** 2)
+            )
+        )
+
+    def init_noise_gen():
+        return gtsam.Pose3.Expmap(
+            np.random.multivariate_normal(
+                np.zeros((6,)), np.diag(np.array(args.initialization_noise_sigmas) ** 2)
+            )
+        )
+
+    if args.comm_loop_measurement_type == "pose":
+        comm_loop_noise_model = gtsam.noiseModel.Diagonal.Sigmas(
+            args.comm_loop_noise_sigmas
+        )
+    elif args.comm_loop_measurement_type == "range":
+        comm_loop_noise_model = gtsam.noiseModel.Diagonal.Sigmas(
+            [args.comm_loop_noise_sigmas[0]]
+        )
+    else:
+        raise RuntimeError("Invalid comm_loop_measurement_type provided")
+
+    def comm_loop_noise_gen():
+        if args.comm_loop_measurement_type == "pose":
+            return gtsam.Pose3.Expmap(
+                np.random.multivariate_normal(
+                    np.zeros((6,)), np.diag(np.array(args.comm_loop_noise_sigmas) ** 2)
+                )
+            )
+        elif args.comm_loop_measurement_type == "range":
+            return np.random.normal(0, args.comm_loop_noise_sigmas[0])
+
+    # Setup the Odometry Model:
+    def gen_odom(pose):
+        i = np.random.choice(np.arange(len(args.odom_probs)), p=args.odom_probs)
+        if pose.x() < args.xlims[0]:
+            end_pose = gtsam.Pose3(
+                gtsam.Rot3.Identity(), np.array([args.xlims[0], pose.y(), pose.z()])
+            )
+            return pose.inverse().compose(end_pose)
+        elif pose.x() > args.xlims[1]:
+            end_pose = gtsam.Pose3(
+                gtsam.Rot3.RzRyRx(np.pi, 0, 0),
+                np.array([args.xlims[1], pose.y(), pose.z()]),
+            )
+            return pose.inverse().compose(end_pose)
+        elif pose.y() < args.ylims[0]:
+            end_pose = gtsam.Pose3(
+                gtsam.Rot3.RzRyRx(np.pi / 2, 0, 0),
+                np.array([pose.x(), args.ylims[0], pose.z()]),
+            )
+            return pose.inverse().compose(end_pose)
+        elif pose.y() > args.ylims[1]:
+            end_pose = gtsam.Pose3(
+                gtsam.Rot3.RzRyRx(-np.pi / 2, 0, 0),
+                np.array([pose.x(), args.ylims[1], pose.z()]),
+            )
+            return pose.inverse().compose(end_pose)
+        elif pose.z() < args.zlims[0]:
+            end_pose = gtsam.Pose3(
+                gtsam.Rot3.RzRyRx(0, -np.pi / 2, 0),
+                np.array([pose.x(), pose.y(), args.zlims[0]]),
+            )
+            return pose.inverse().compose(end_pose)
+        elif pose.z() > args.zlims[1]:
+            end_pose = gtsam.Pose3(
+                gtsam.Rot3.RzRyRx(0, np.pi / 2, 0),
+                np.array([pose.x(), pose.y(), args.zlims[1]]),
+            )
+            return pose.inverse().compose(end_pose)
+        else:
+            return ODOM_OPTIONS_GRIDWORLD[i]
+
+    stamp = 0
+    gtvals = gtsam.Values()
+    initvals = gtsam.Values()
+
+    builder, gtvals, initvals = add_priors(
+        builder, robots, stamp, 0, gtvals, initvals, args
+    )
+    for pose_num in range(1, args.number_poses):
+        stamp += 1
+        builder, gtvals, initvals = add_odom_step(
+            builder,
+            robots,
+            stamp,
+            pose_num,
+            odom_noise_model,
+            odom_noise_gen,
+            gen_odom,
+            gtvals,
+            initvals,
+            init_noise_gen,
+            args,
+        )
+
+        stamp += 1
+        builder = add_self_loops(
+            builder,
+            robots,
+            stamp,
+            pose_num,
+            loop_noise_model,
+            loop_noise_gen,
+            gtvals,
+            args,
+        )
+        if pose_num % args.comm_freq == 0:
+            stamp += 1
+            builder = add_comm_loops(
+                builder,
+                robots,
+                stamp,
+                pose_num,
+                comm_loop_noise_model,
+                comm_loop_noise_gen,
+                gtvals,
+                initvals,
+                args,
+            )
+
+    dataset = builder.build()
+    writer = jrl.Writer()
+    writer.writeDataset(
+        dataset,
+        os.path.join(args.output_dir, args.name + "_{:04d}.jrl".format(dataset_count)),
+        False,
+    )
+
+
+def main():
+    args = handle_args()
+    for i in range(args.repeats):
+        print(i)
+        make_dataset(args, i)
+
+
+if __name__ == "__main__":
+    main()

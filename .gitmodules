@@ -1,0 +1,9 @@
+[submodule "thirdparty/admm-slam"]
+	path = thirdparty/admm-slam
+	url = https://github.com/DanMcGann/admm-slam.git
+[submodule "thirdparty/distributed-gauss-sidel"]
+	path = thirdparty/distributed-gauss-sidel
+	url = https://github.com/DanMcGann/distributed-gauss-sidel.git
+[submodule "thirdparty/dc2-pgo"]
+	path = thirdparty/dc2-pgo
+	url = https://github.com/DanMcGann/dc2-pgo.git

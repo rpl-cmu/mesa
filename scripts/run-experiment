@@ -1,0 +1,66 @@
+#!/usr/bin/env python
+import os
+import argparse
+from helpers.run_experiment import run_experiment
+
+
+"""
+Runs an experiment. Call this script on a directory with the following structure
+/datasets
+    /"Indep_Var_1"
+        indep_var_dataset_0.jrr
+        ...
+    ...
+/results
+
+And the script will produce results for all provided methods on all datasets for each independent variable
+"""
+
+
+def handle_args():
+    parser = argparse.ArgumentParser(
+        description="Runs an experiment (see script documentation for details)."
+    )
+    parser.add_argument(
+        "--experiment_dir",
+        "-d",
+        help="Path to the experiment directory",
+        required=True,
+    )
+    parser.add_argument(
+        "--independent_vars",
+        "-iv",
+        type=str,
+        nargs="+",
+        help="The independent variable of the dataset",
+        required=True,
+    )
+    parser.add_argument(
+        "--methods",
+        "-m",
+        type=str,
+        nargs="+",
+        help="The method to run on these datasets.",
+        required=True,
+    )
+    parser.add_argument(
+        "--nworkers", "-n", help="Number of threads to spin up", required=True, type=int
+    )
+    parser.add_argument(
+        "--linear",
+        "-l",
+        action="store_true",
+        help="Whether or not the dataset is Linear",
+    )
+
+    parser.add_argument(
+        "--is3d",
+        action="store_true",
+        help="Whether or not the dataset is 3d",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = handle_args()
+    run_experiment(**vars(args))

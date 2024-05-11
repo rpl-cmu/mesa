@@ -1,0 +1,114 @@
+#!/usr/bin/env python
+import argparse
+import os
+import sys
+
+import jrl
+import gtsam
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from helpers.plot_trajectories import plot_traj_3d, plot_traj_2d
+
+
+def handle_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--input_dataset",
+        "-d",
+        type=str,
+        nargs="+",
+        required=True,
+        help="The input jrl file",
+    )
+
+    parser.add_argument(
+        "--input_results",
+        "-r",
+        type=str,
+        nargs="+",
+        required=True,
+        help="The input jrr file",
+    )
+
+    parser.add_argument(
+        "--linear",
+        "-l",
+        action="store_true",
+        help="Whether or not the dataset is Linear",
+    )
+
+    parser.add_argument(
+        "--is3d",
+        action="store_true",
+        help="Whether or not the dataset is 3d",
+    )
+
+    parser.add_argument(
+        "--output_to",
+        type=str,
+        help="Location to save figures",
+        default=None
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = handle_args()
+    args.input_dataset.sort()
+    args.input_results.sort()
+
+    parser = jrl.Parser()
+    count = 0
+    for dataset_file, result_file in zip(
+        args.input_dataset * len(args.input_results), args.input_results
+    ):
+        print(dataset_file, "\n", result_file)
+        dataset = parser.parseDataset(dataset_file, False)
+        results = parser.parseResults(result_file, True)
+        colors = sns.color_palette("colorblind", len(dataset.robots()))
+
+        print(dataset.robots())
+
+        fig = plt.figure(figsize=[8, 4.5], dpi=200)
+
+        if args.is3d:
+            ax = fig.add_subplot(projection='3d')
+            ax.view_init(30, 60)
+            plot_traj_3d(
+                ax,
+                dataset,
+                results,
+                colors,
+                include_shared_vars=False,
+                include_gt=False
+            )
+            results.robot_solutions['a'].values.atPose3(gtsam.symbol('a', 0)).print()
+        else:
+            ax = plt.gca()
+            plot_traj_2d(
+                ax,
+                dataset,
+                results,
+                colors,
+                include_shared_vars=True,
+                include_gt=True,
+                linear=args.linear,
+            )
+
+        ax.set_aspect("equal")
+        plt.axis('off')
+        plt.tight_layout(pad=0.25)
+        if args.output_to is not None:
+            plt.savefig(os.path.join(args.output_to, "{:05d}.png".format(count)))
+            count += 1
+            plt.close()
+        else:
+            plt.show()
+
+
+
+
+if __name__ == "__main__":
+    main()  #

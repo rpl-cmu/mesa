@@ -1,0 +1,81 @@
+#!/usr/bin/env python
+import os
+import argparse
+from helpers.compare_average_final_results import compare_average_final_results
+
+
+def handle_args():
+    parser = argparse.ArgumentParser(
+        description="Compares the convergence of multiple results on a single dataset"
+    )
+    parser.add_argument(
+        "--experiment_name",
+        "-n",
+        help="The name of the experiment",
+        required=True,
+    )
+    parser.add_argument(
+        "--dataset_dir",
+        "-d",
+        type=str,
+        help="The dataset containing all the datasets for all trials",
+        required=True,
+    )
+    parser.add_argument(
+        "--result_dir",
+        "-r",
+        type=str,
+        help="The directory containing all method results",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--independent_variables",
+        "-iv",
+        type=str,
+        nargs="+",
+        help="The independent variables explored in the experiment",
+        required=True,
+    )
+    parser.add_argument(
+        "--independent_variable_labels",
+        "-ivl",
+        type=str,
+        nargs="+",
+        help="The Labels independent variables explored in the experiment",
+        required=True,
+    )
+    parser.add_argument(
+        "--all_methods",
+        "-m",
+        type=str,
+        nargs="+",
+        help="The names of all methods",
+        required=True,
+    )
+    parser.add_argument(
+        "--xlabel",
+        "-x",
+        type=str,
+        help="The label to use for the x-axis",
+        required=True,
+    )
+    parser.add_argument(
+        "--legend",
+        "-l",
+         action="store_true",
+        help="Plot the legend with the figure",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        help="The output destination for the figure",
+        default=None
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = handle_args()
+    compare_average_final_results(**vars(args))

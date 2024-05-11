@@ -1,0 +1,190 @@
+#!/usr/bin/env python
+import argparse
+import os
+import sys
+
+import jrl
+import gtsam
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+def handle_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "input", type=str, help="The input jrl file"
+    )
+    parser.add_argument(
+        "--plot_loops",
+        "-pl",
+        action="store_true",
+        help="Whether or not to plot intra robot loops",
+    )
+
+    parser.add_argument(
+        "--plot_comms",
+        "-pc",
+        action="store_true",
+        help="Whether or not to plot inter robot loops",
+    )
+
+    parser.add_argument(
+        "--linear",
+        "-l",
+        action="store_true",
+        help="Whether or not the dataset is linear",
+    )
+    parser.add_argument(
+        "--is3d",
+        action="store_true",
+        help="Whether or not the dataset is 3d",
+    )
+
+    parser.add_argument(
+        "--save", "-s", action="store_true", help="Whether or not to save the figure"
+    )
+
+    return parser.parse_args()
+
+
+def getPoint(k, vals, args):
+    if args.linear:
+        if args.is3d:
+            return vals.atPoint3(k)
+        else:
+            return vals.atPoint2(k)
+    else:
+        if args.is3d:
+            return vals.atPose3(k).translation()
+        else:
+            return vals.atPose2(k).translation()
+
+
+def plot_odom(dataset, colors, args):
+    for idx, robot in enumerate(dataset.robots()):
+        if dataset.containsGroundTruth():
+            positions = []
+            gtvals = dataset.groundTruth(robot)
+            for k in gtvals.keys():
+                s = gtsam.Symbol(k)
+                if chr(s.chr()) == robot:
+                    positions.append(getPoint(k, gtvals, args))
+            positions = np.stack(positions)
+            if args.is3d:
+                plt.plot(
+                    positions.T[0],
+                    positions.T[1],
+                    positions.T[2],
+                    alpha=1,
+                    color=colors[idx],
+                )
+            else:
+                plt.plot(
+                    positions.T[0],
+                    positions.T[1],
+                    alpha=1,
+                    color=colors[idx],
+                )
+        """
+        if dataset.containsInitialization():
+            init_positions = []
+            initvals = dataset.initialization(robot)
+            for k in initvals.keys():
+                s = gtsam.Symbol(k)
+                if chr(s.chr()) == robot:
+                    init_positions.append(getPoint(k, initvals, args))
+            init_positions = np.stack(init_positions)
+            
+            if args.is3d:
+                plt.plot(
+                    init_positions.T[0],
+                    init_positions.T[1],
+                    init_positions.T[2],
+                    alpha=0.5,
+                    color=colors[idx],
+                    #marker=".",
+                )
+            else:
+                plt.plot(
+                    init_positions.T[0],
+                    init_positions.T[1],
+                    alpha=0.5,
+                    color=colors[idx],
+                    #marker=".",
+                )
+        """
+
+def plot_loops(dataset, colors, args):
+    for ridx, robot in enumerate(dataset.robots()):
+        if dataset.containsGroundTruth():
+            gtvals = dataset.groundTruth(robot)
+            for entry in dataset.measurements(robot):
+                for i in range(entry.measurements.nrFactors()):
+                    factor = entry.measurements.at(i)
+                    keys = factor.keys()
+                    if len(keys) > 1:
+                        k1, k2 = keys
+                        s1, s2 = gtsam.Symbol(k1), gtsam.Symbol(k2)
+
+                        pts = np.array([getPoint(k1, gtvals, args), getPoint(k2, gtvals, args)])
+
+                        if chr(s1.chr()) == chr(s2.chr())  and (abs(s1.index() - s2.index()) != 1) and args.plot_loops:
+                            if args.is3d:
+                                plt.plot(
+                                    pts.T[0],
+                                    pts.T[1],
+                                    pts.T[2],
+                                    color=colors[ridx],
+                                    alpha=0.5,
+                                    marker=".",
+                                )
+                            else:
+                                plt.plot(
+                                    pts.T[0],
+                                    pts.T[1],
+                                    color=colors[ridx],
+                                    alpha=0.5,
+                                    marker=".",
+                                )
+
+                        if chr(s1.chr()) != chr(s2.chr()) and args.plot_comms:
+                            if args.is3d:
+                                plt.plot(pts.T[0], pts.T[1], pts.T[2], color="black", alpha=0.1)
+                            else:
+                                plt.plot(pts.T[0], pts.T[1], color="black", alpha=0.1)
+
+
+def main():
+    args = handle_args()
+    parser = jrl.Parser()
+    dataset = parser.parseDataset(args.input, False)
+    colors = sns.color_palette("colorblind", len(dataset.robots()))
+
+    print(dataset.robots())
+
+    fig = plt.figure(dpi=200, figsize=[3,3])
+    if args.is3d:
+        ax = fig.add_subplot(projection="3d")
+    else:
+        ax = plt.gca()
+    plot_odom(dataset, colors, args)
+    plot_loops(dataset, colors, args)
+
+    # Turn off numbers on axes
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    if (args.is3d):
+        ax.set_zticklabels([])
+        ax.view_init(elev=30, azim=45)
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    plt.tight_layout(pad=0.25)
+    if args.save:
+        plt.savefig("{}_fig.png".format(dataset.name()))
+    
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
