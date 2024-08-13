@@ -9,7 +9,7 @@ MESA is a fully distributed, asynchronous, and general purpose optimization algo
     width="80%"/>
 </p>
 
-This code implements the MESA algorithm as described in our ICRA 2024 paper which can be found on [arXiv](https://arxiv.org/abs/2310.12320). If you use this package please cite our paper as:
+This code implements the MESA algorithm as described in our ICRA 2024 paper which can be found on [arXiv](https://arxiv.org/abs/2310.12320) and [IEEE Xplore](https://ieeexplore.ieee.org/abstract/document/10611193). If you use this package please cite our paper as:
 
 ```
 @inproceedings{mcgann_mesa_2024, 
@@ -18,7 +18,7 @@ This code implements the MESA algorithm as described in our ICRA 2024 paper whic
     fullauthor = {Daniel McGann and Kyle Lassak and Michael Kaess},
     booktitle = {Proc. IEEE Intl. Conf. on Robotics and Automation (ICRA)},
     year = 2024,
-    pages = {n/a}, % will be added soon
+    pages = {4577-4583},
     address = {Yokohama, {JP}}
 }
 ```
